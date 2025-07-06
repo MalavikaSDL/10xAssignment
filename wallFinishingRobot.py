@@ -88,32 +88,29 @@ def generate_path(req: PathRequest):
         algorithm = req.algorithm
         wall_obstacles = json.loads(r.get(f"wall:{wall_id}:obstacles"))
 
-        # inside the function:
         grid_size = 10
         grid = [[0]*grid_size for _ in range(grid_size)]
-        
         for obs in wall_obstacles:
             x = int(obs["x"])
             y = int(obs["y"])
             if 0 <= x < grid_size and 0 <= y < grid_size:
-                grid[y][x] = 1  # mark as obstacle
+                grid[y][x] = 1
         
         start, goal = (0, 0), (grid_size-1, grid_size-1)
         path = astar(grid, start, goal)
         metrics = {"duration_ms": 50, "path_length": len(path)}
 
-
         path_id = str(uuid.uuid4())
         cursor.execute("INSERT INTO paths (id, wall_id, algorithm, path_json, metrics_json) VALUES (%s, %s, %s, %s, %s)",
                        (path_id, wall_id, algorithm, json.dumps(path), json.dumps(metrics)))
         conn.commit()
-
-        # Cache the result
         r.set(f"path:{path_id}", json.dumps(path))
 
+        logging.info(f"📍 Path planned: ID={path_id}, Wall={wall_id}, Algorithm={algorithm}, Length={len(path)}")
         return {"path_id": path_id, "path": path, "metrics": metrics}
 
     except Exception as e:
+        logging.error(f"❌ Path planning failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/execute/{path_id}")
@@ -123,12 +120,12 @@ def execute_path(path_id: str):
         cursor.execute("SELECT path_json FROM paths WHERE id = %s", (path_id,))
         result = cursor.fetchone()
         if not result:
+            logging.warning(f"⚠️ Path not found for execution: ID={path_id}")
             raise HTTPException(status_code=404, detail="Path not found")
         path_json = json.dumps(result[0])
 
-    # Send to robot via RabbitMQ
     channel.basic_publish(exchange='', routing_key='robot_path', body=path_json)
-    logging.info("Path sent to robot: %s", path_json)
+    logging.info(f"🚀 Path sent to robot: ID={path_id}")
     return {"status": "sent"}
 
 @app.get("/metrics/")
@@ -138,6 +135,7 @@ def get_metrics():
         "robot_status": r.get("robot_status") or b"idle",
         "cached_paths": len(r.keys("path:*"))
     }
+    logging.info("📊 Metrics requested")
     return {key: value.decode() if isinstance(value, bytes) else value for key, value in metrics.items()}
 
 @app.get("/plan/{path_id}")
@@ -145,5 +143,8 @@ def get_path(path_id: str):
     cursor.execute("SELECT path_json, metrics_json FROM paths WHERE id = %s", (path_id,))
     row = cursor.fetchone()
     if not row:
+        logging.warning(f"⚠️ Path not found: ID={path_id}")
         raise HTTPException(status_code=404, detail="Path not found")
+    logging.info(f"📦 Path retrieved: ID={path_id}")
     return {"path": row[0], "metrics": row[1]}
+

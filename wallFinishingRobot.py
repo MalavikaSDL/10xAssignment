@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
+from aStar import astar 
 import uuid
 import json
 import redis
@@ -88,9 +89,20 @@ def generate_path(req: PathRequest):
         algorithm = req.algorithm
         wall_obstacles = json.loads(r.get(f"wall:{wall_id}:obstacles"))
 
-        # Example dummy path (replace with real A*/GA)
-        path = [(0, 0), (1, 0), (2, 1), (3, 1), (4, 2)]
+        # inside the function:
+        grid_size = 10
+        grid = [[0]*grid_size for _ in range(grid_size)]
+        
+        for obs in wall_obstacles:
+            x = int(obs["x"])
+            y = int(obs["y"])
+            if 0 <= x < grid_size and 0 <= y < grid_size:
+                grid[y][x] = 1  # mark as obstacle
+        
+        start, goal = (0, 0), (grid_size-1, grid_size-1)
+        path = astar(grid, start, goal)
         metrics = {"duration_ms": 50, "path_length": len(path)}
+
 
         path_id = str(uuid.uuid4())
         cursor.execute("INSERT INTO paths (id, wall_id, algorithm, path_json, metrics_json) VALUES (%s, %s, %s, %s, %s)",

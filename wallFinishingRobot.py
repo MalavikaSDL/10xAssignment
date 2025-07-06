@@ -16,7 +16,8 @@ app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 
 # Redis setup
-r = redis.Redis(host='localhost', port=6379, db=0)
+r = redis.from_url(os.environ['REDIS_URL'], decode_responses=True)
+
 
 # RabbitMQ setup
 parameters = pika.URLParameters(os.environ['RABBITMQ_URL'])

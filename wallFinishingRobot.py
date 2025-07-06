@@ -28,9 +28,7 @@ channel = connection.channel()
 channel.queue_declare(queue='robot_path')
 
 # PostgreSQL setup
-conn = psycopg2.connect(
-    dbname="robotdb", user="postgres", password="password", host="localhost", port="5432"
-)
+conn = psycopg2.connect(os.environ["DATABASE_URL"])
 cursor = conn.cursor()
 
 cursor.execute('''

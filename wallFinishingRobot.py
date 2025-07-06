@@ -8,6 +8,7 @@ import pika
 import time
 import logging
 import psycopg2
+import os
 
 app = FastAPI()
 
@@ -18,7 +19,9 @@ logging.basicConfig(level=logging.INFO)
 r = redis.Redis(host='localhost', port=6379, db=0)
 
 # RabbitMQ setup
-connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+parameters = pika.URLParameters(os.environ['RABBITMQ_URL'])
+connection = pika.BlockingConnection(parameters)
+
 channel = connection.channel()
 channel.queue_declare(queue='robot_path')
 

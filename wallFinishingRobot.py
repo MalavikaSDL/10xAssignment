@@ -1,0 +1,134 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+import uuid
+import json
+import redis
+import pika
+import time
+import logging
+import psycopg2
+
+app = FastAPI()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+# Redis setup
+r = redis.Redis(host='localhost', port=6379, db=0)
+
+# RabbitMQ setup
+connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+channel = connection.channel()
+channel.queue_declare(queue='robot_path')
+
+# PostgreSQL setup
+conn = psycopg2.connect(
+    dbname="robotdb", user="postgres", password="password", host="localhost", port="5432"
+)
+cursor = conn.cursor()
+
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS walls (
+    id UUID PRIMARY KEY,
+    width FLOAT,
+    height FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+''')
+
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS paths (
+    id UUID PRIMARY KEY,
+    wall_id UUID,
+    algorithm TEXT,
+    path_json JSONB,
+    metrics_json JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+''')
+
+conn.commit()
+
+# Models
+class Obstacle(BaseModel):
+    shape: str
+    x: float
+    y: float
+    radius: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+
+class Wall(BaseModel):
+    width: float
+    height: float
+    obstacles: List[Obstacle]
+
+class PathRequest(BaseModel):
+    wall_id: str
+    algorithm: str
+
+# API Endpoints
+@app.post("/walls/")
+def create_wall(wall: Wall):
+    wall_id = str(uuid.uuid4())
+    cursor.execute("INSERT INTO walls (id, width, height) VALUES (%s, %s, %s)", (wall_id, wall.width, wall.height))
+    conn.commit()
+    r.set(f"wall:{wall_id}:obstacles", json.dumps([obs.dict() for obs in wall.obstacles]))
+    return {"wall_id": wall_id}
+
+@app.post("/plan/")
+def generate_path(req: PathRequest):
+    try:
+        wall_id = req.wall_id
+        algorithm = req.algorithm
+        wall_obstacles = json.loads(r.get(f"wall:{wall_id}:obstacles"))
+
+        # Example dummy path (replace with real A*/GA)
+        path = [(0, 0), (1, 0), (2, 1), (3, 1), (4, 2)]
+        metrics = {"duration_ms": 50, "path_length": len(path)}
+
+        path_id = str(uuid.uuid4())
+        cursor.execute("INSERT INTO paths (id, wall_id, algorithm, path_json, metrics_json) VALUES (%s, %s, %s, %s, %s)",
+                       (path_id, wall_id, algorithm, json.dumps(path), json.dumps(metrics)))
+        conn.commit()
+
+        # Cache the result
+        r.set(f"path:{path_id}", json.dumps(path))
+
+        return {"path_id": path_id, "path": path, "metrics": metrics}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/execute/{path_id}")
+def execute_path(path_id: str):
+    path_json = r.get(f"path:{path_id}")
+    if not path_json:
+        cursor.execute("SELECT path_json FROM paths WHERE id = %s", (path_id,))
+        result = cursor.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="Path not found")
+        path_json = json.dumps(result[0])
+
+    # Send to robot via RabbitMQ
+    channel.basic_publish(exchange='', routing_key='robot_path', body=path_json)
+    logging.info("Path sent to robot: %s", path_json)
+    return {"status": "sent"}
+
+@app.get("/metrics/")
+def get_metrics():
+    metrics = {
+        "api_response_time_ms": 20,
+        "robot_status": r.get("robot_status") or b"idle",
+        "cached_paths": len(r.keys("path:*"))
+    }
+    return {key: value.decode() if isinstance(value, bytes) else value for key, value in metrics.items()}
+
+@app.get("/plan/{path_id}")
+def get_path(path_id: str):
+    cursor.execute("SELECT path_json, metrics_json FROM paths WHERE id = %s", (path_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Path not found")
+    return {"path": row[0], "metrics": row[1]}

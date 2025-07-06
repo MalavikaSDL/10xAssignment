@@ -12,16 +12,13 @@ import os
 
 app = FastAPI()
 
-# Redis setup
 r = redis.from_url(os.environ['REDIS_URL'], decode_responses=True)
 
-# RabbitMQ setup
 parameters = pika.URLParameters(os.environ['RABBITMQ_URL'])
 connection = pika.BlockingConnection(parameters)
 channel = connection.channel()
 channel.queue_declare(queue='robot_path')
 
-# PostgreSQL setup
 conn = psycopg2.connect(os.environ["DATABASE_URL"])
 cursor = conn.cursor()
 
@@ -47,7 +44,6 @@ CREATE TABLE IF NOT EXISTS paths (
 
 conn.commit()
 
-# Models
 class Obstacle(BaseModel):
     shape: str
     x: float
@@ -65,7 +61,6 @@ class PathRequest(BaseModel):
     wall_id: str
     algorithm: str
 
-# API Endpoints
 @app.post("/walls/")
 def create_wall(wall: Wall):
     wall_id = str(uuid.uuid4())

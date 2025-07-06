@@ -78,6 +78,7 @@ def create_wall(wall: Wall):
     cursor.execute("INSERT INTO walls (id, width, height) VALUES (%s, %s, %s)", (wall_id, wall.width, wall.height))
     conn.commit()
     r.set(f"wall:{wall_id}:obstacles", json.dumps([obs.dict() for obs in wall.obstacles]))
+    logging.info(f"✅ Wall created: ID={wall_id}, Width={wall.width}, Height={wall.height}")
     return {"wall_id": wall_id}
 
 @app.post("/plan/")
